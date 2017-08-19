@@ -42,8 +42,15 @@ public class Controller {
     let configMgr: ConfigurationManager
     let health: Health
     let rootDirectory = URL(fileURLWithPath: "\(FileManager().currentDirectoryPath)/public/images")
-    let originalsDirectory = rootDirectory.appendingPathComponent("originals")
-    let finalDirectory = rootDirectory.appendingPathComponent("final")
+    var originalsDirectory: URL
+    {
+        return self.rootDirectory.appendingPathComponent("originals")
+    }
+    
+    var finalDirectory: URL
+    {
+        return self.rootDirectory.appendingPathComponent("final")
+    }
     
     public var port: Int {
         get { return configMgr.port }
@@ -83,9 +90,26 @@ public class Controller {
         router.post("/askChatbotEinstein", handler: handleAskChatbotEinstein)
         router.get("/asciiArt/:keywords", handler: getAsciiArt)
         router.get("/stackOverflow/:keywords", handler: getStackOverflow)
+        router.get("/faceDetect/:url", handler: getFaceDetect)
+        
+        let string = "http://cdn.guardian.ng/wp-content/uploads/2016/03/John-Kerry.jpg".addingPercentEncoding(withAllowedCharacters: CharacterSet.urlHostAllowed)
+        Log.info(string!)
     }
     
     // MARK: - Einstein
+    private func getFaceDetect(request: RouterRequest, response: RouterResponse, next: () -> Void)
+    {
+        defer
+        {
+            next()
+        }
+        guard let encodedURL = request.parameters["url"],
+              let decodedURL = encodedURL.removingPercentEncoding,
+              let url = URL(string: decodedURL) else { return }
+        let (finalURL, _) = processImage(url: url)
+        response.send(finalURL?.absoluteString ?? "Could not process image")
+    }
+    
     private func handleAskChatbotEinstein(request: RouterRequest, response: RouterResponse, next: () -> Void)
     {
         defer
@@ -100,10 +124,43 @@ public class Controller {
         
     }
     
+    private func processImage(url: URL) -> (URL?, [WatsonFace])
+    {
+        guard let resizedImageURL = resizeImage(url: url),
+              let faces = sendImageToWatson(imageURL: resizedImageURL) else { return (nil, []) }
+        Log.info(faces.description)
+        return (draw(faces: faces, imageURL: resizedImageURL), faces)
+    }
+    
+    private func draw(faces: [WatsonFace], imageURL: URL) -> URL?
+    {
+        let name = imageURL.lastPathComponent
+        let image = Image(url: imageURL)
+        for face in faces
+        {
+            image?.drawLine(from: Point(x: face.faceLocation.left, y: face.faceLocation.top), to: Point(x: face.faceLocation.left + face.faceLocation.width, y: face.faceLocation.top), color: Color.red)
+            image?.drawLine(from: Point(x: face.faceLocation.left, y: face.faceLocation.top + face.faceLocation.height), to: Point(x: face.faceLocation.left + face.faceLocation.width, y: face.faceLocation.top + face.faceLocation.height), color: Color.red)
+            image?.drawLine(from: Point(x: face.faceLocation.left, y: face.faceLocation.top), to: Point(x: face.faceLocation.left, y: face.faceLocation.top + face.faceLocation.height), color: Color.red)
+            image?.drawLine(from: Point(x: face.faceLocation.left + face.faceLocation.width, y: face.faceLocation.top), to: Point(x: face.faceLocation.left + face.faceLocation.width, y: face.faceLocation.top + face.faceLocation.height), color: Color.red)
+        }
+        let newURL = finalDirectory.appendingPathComponent(name)
+        image?.write(to: newURL)
+        return URL(string: "\(self.url)/images/final/\(name)")
+    }
+    
+    private func sendImageToWatson(imageURL: URL) -> [WatsonFace]?
+    {
+        let name = imageURL.lastPathComponent
+        guard let data = getImageData(for: "https://gateway-a.watsonplatform.net/visual-recognition/api/v3/detect_faces?api_key=b78348e9d39118131c255bf670cbe5fe982d0fd4&url=\(self.url)/images/originals/\(name)&version=2016-05-20") else { return nil }
+        let json = JSON(data: data)
+        guard let imageJSON = json["images"].arrayValue.first else { return nil }
+        let facesJSON = imageJSON["faces"].arrayValue
+        return facesJSON.map(WatsonFace.init)
+    }
+    
     private func resizeImage(url: URL) -> URL?
     {
-        guard let imageData = getImageData(for: path),
-            let url = URL(string: path) else { return nil }
+        guard let imageData = getImageData(for: url.absoluteString) else { return nil }
         let name = url.lastPathComponent
         let tempName = NSTemporaryDirectory().appending(name)
         let tempURL = URL(fileURLWithPath: tempName)
@@ -114,7 +171,7 @@ public class Controller {
         {
             image = image.resizedTo(height: 300) ?? image
             let newURL = originalsDirectory.appendingPathComponent(name)
-            _ = try? imageData.write(to: tempURL)
+            image.write(to: newURL)
             return newURL
         }
         return nil
