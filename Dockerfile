@@ -15,13 +15,16 @@
 ##
 
 # Builds a Docker image with all the dependencies for compiling and running the Kitura-Starter sample application.
-
-FROM ibmcom/swift-ubuntu:3.1.1
+FROM ubuntu:16.10
+# FROM ibmcom/swift-ubuntu:3.1.1
 MAINTAINER IBM Swift Engineering at IBM Cloud
 LABEL Description="Docker image for building and running the Kitura-Starter sample application."
 
 # Expose default port for Kitura
 EXPOSE 8080
+
+USER root
+CMD ["apt-get libgd-dev"]
 
 RUN mkdir /root/Kitura-Starter
 
