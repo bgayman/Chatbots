@@ -68,12 +68,6 @@
       "version": "1.7.15"
     },
     {
-      "package": "KituraRequest",
-      "reason": null,
-      "repositoryURL": "https://github.com/IBM-Swift/Kitura-Request.git",
-      "version": "0.8.2"
-    },
-    {
       "package": "LoggerAPI",
       "reason": null,
       "repositoryURL": "https://github.com/IBM-Swift/LoggerAPI.git",

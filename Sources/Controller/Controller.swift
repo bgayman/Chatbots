@@ -41,6 +41,9 @@ public class Controller {
     public let router: Router
     let configMgr: ConfigurationManager
     let health: Health
+    let rootDirectory = URL(fileURLWithPath: "\(FileManager().currentDirectoryPath)/public/images")
+    let originalsDirectory = rootDirectory.appendingPathComponent("originals")
+    let finalDirectory = rootDirectory.appendingPathComponent("final")
     
     public var port: Int {
         get { return configMgr.port }
@@ -77,8 +80,44 @@ public class Controller {
         router.post("/askChatbot", handler: handleAskChatbot)
         router.post("/askChatbotStackOverflow", handler: handleAskChatbotStackOverflow)
         router.post("/askChatbotJeopardy", handler: handleAskChatbotJeopardy)
+        router.post("/askChatbotEinstein", handler: handleAskChatbotEinstein)
         router.get("/asciiArt/:keywords", handler: getAsciiArt)
         router.get("/stackOverflow/:keywords", handler: getStackOverflow)
+    }
+    
+    // MARK: - Einstein
+    private func handleAskChatbotEinstein(request: RouterRequest, response: RouterResponse, next: () -> Void)
+    {
+        defer
+        {
+            next()
+        }
+        let requestData = try? request.readString()
+        Log.info(requestData.debugDescription)
+        guard let readString = requestData else { return }
+        let slackRequest = SlackRequest(payload: readString ?? "")
+        guard let url = URL(string: slackRequest.text ?? "") else { return }
+        
+    }
+    
+    private func resizeImage(url: URL) -> URL?
+    {
+        guard let imageData = getImageData(for: path),
+            let url = URL(string: path) else { return nil }
+        let name = url.lastPathComponent
+        let tempName = NSTemporaryDirectory().appending(name)
+        let tempURL = URL(fileURLWithPath: tempName)
+        Log.info(tempURL.absoluteString)
+        _ = try? imageData.write(to: tempURL)
+        
+        if var image = Image(url: tempURL)
+        {
+            image = image.resizedTo(height: 300) ?? image
+            let newURL = originalsDirectory.appendingPathComponent(name)
+            _ = try? imageData.write(to: tempURL)
+            return newURL
+        }
+        return nil
     }
     
     // MARK: - Jeopardy
@@ -295,7 +334,7 @@ public class Controller {
     private func image(for path: String) -> Image?
     {
         guard let imageData = getImageData(for: path),
-            let url = URL(string: path) else { return nil }
+              let url = URL(string: path) else { return nil }
         
         let tempName = NSTemporaryDirectory().appending(url.lastPathComponent)
         let tempURL = URL(fileURLWithPath: tempName)
@@ -329,7 +368,6 @@ public class Controller {
         {
             return nil
         }
-        
     }
     
     private func getImgJSON(for keywords: String) -> JSON?
