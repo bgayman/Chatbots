@@ -24,7 +24,7 @@ import CloudFoundryConfig
 import Health
 import KituraNet
 import SwiftGD
-import KituraRequest
+import Dispatch
 
 struct Configuration
 {
@@ -41,7 +41,21 @@ public class Controller {
     public let router: Router
     let configMgr: ConfigurationManager
     let health: Health
-    let rootDirectory = URL(fileURLWithPath: "\(FileManager().currentDirectoryPath)/public/images")
+    let staticServer = StaticFileServer()
+    fileprivate let separatorCharacter: Character = "/"
+    fileprivate var separator: String
+    {
+        return String(separatorCharacter)
+    }
+    
+    var rootDirectory: URL
+    {
+        #if os(Linux)
+            return URL(fileURLWithPath: self.getAbsolutePath(for:"\(FileManager().currentDirectoryPath)/public/images"))
+        #else
+            return URL(fileURLWithPath: self.getAbsolutePath(for: "Chatbots/public/images"))
+        #endif
+    }
     var originalsDirectory: URL
     {
         return self.rootDirectory.appendingPathComponent("originals")
@@ -52,7 +66,8 @@ public class Controller {
         return self.rootDirectory.appendingPathComponent("final")
     }
     
-    public var port: Int {
+    public var port: Int
+    {
         get { return configMgr.port }
     }
     
@@ -61,6 +76,11 @@ public class Controller {
     }
     
     public init() {
+        
+        #if os(Linux)
+            srand(UInt32(time(nil)))
+        #endif
+        
         configMgr = ConfigurationManager().load(.environmentVariables)
         
         // All web apps need a Router instance to define routes
@@ -70,7 +90,7 @@ public class Controller {
         health = Health()
         
         // Serve static content from "public"
-        router.all("/", middleware: StaticFileServer())
+        router.all("/", middleware: staticServer)
         
         // Basic GET request
         router.get("/hello", handler: getHello)
@@ -91,9 +111,6 @@ public class Controller {
         router.get("/asciiArt/:keywords", handler: getAsciiArt)
         router.get("/stackOverflow/:keywords", handler: getStackOverflow)
         router.get("/faceDetect/:url", handler: getFaceDetect)
-        
-        let string = "http://cdn.guardian.ng/wp-content/uploads/2016/03/John-Kerry.jpg".addingPercentEncoding(withAllowedCharacters: CharacterSet.urlHostAllowed)
-        Log.info(string!)
     }
     
     // MARK: - Einstein
@@ -120,41 +137,112 @@ public class Controller {
         Log.info(requestData.debugDescription)
         guard let readString = requestData else { return }
         let slackRequest = SlackRequest(payload: readString ?? "")
-        guard let url = URL(string: slackRequest.text ?? "") else { return }
-        
+        guard let url = URL(string: slackRequest.text?.removingPercentEncoding ?? "") else { return }
+        response.send("Time is relative, so that might be why it seems like this is taking a long time")
+        DispatchQueue.global(qos: .background).async
+        {
+            let (einsteinImageURL, faces) = self.processImage(url: url)
+            guard let imageURL = einsteinImageURL else { return }
+            let attachment = SlackMessageAttachment(watsonFace: faces.first, imageURL: imageURL)
+            let json: [String: Any] = ["response_type": "in_channel",
+                                       "text": "\(url.absoluteString)",
+                                       "attachments": [attachment.json]]
+            Log.error(json.debugDescription)
+            self.postEinsteinResponse(at: slackRequest.responseURL, json: JSON(json))
+        }
     }
     
     private func processImage(url: URL) -> (URL?, [WatsonFace])
     {
-        guard let resizedImageURL = resizeImage(url: url),
-              let faces = sendImageToWatson(imageURL: resizedImageURL) else { return (nil, []) }
+        guard let faces = sendImageToWatson(imageURL: url) else { return (nil, []) }
         Log.info(faces.description)
-        return (draw(faces: faces, imageURL: resizedImageURL), faces)
+        return (draw(faces: faces, imageURL: url), faces)
     }
     
     private func draw(faces: [WatsonFace], imageURL: URL) -> URL?
     {
         let name = imageURL.lastPathComponent
-        let image = Image(url: imageURL)
+        Log.info(imageURL.absoluteString)
+        var image = self.image(for: imageURL.absoluteString, shouldResize: false)
+        Log.info(image.debugDescription)
+        let einsteinURL = randomEinsteinURL()
+        Log.info(einsteinURL)
         for face in faces
         {
-            image?.drawLine(from: Point(x: face.faceLocation.left, y: face.faceLocation.top), to: Point(x: face.faceLocation.left + face.faceLocation.width, y: face.faceLocation.top), color: Color.red)
-            image?.drawLine(from: Point(x: face.faceLocation.left, y: face.faceLocation.top + face.faceLocation.height), to: Point(x: face.faceLocation.left + face.faceLocation.width, y: face.faceLocation.top + face.faceLocation.height), color: Color.red)
-            image?.drawLine(from: Point(x: face.faceLocation.left, y: face.faceLocation.top), to: Point(x: face.faceLocation.left, y: face.faceLocation.top + face.faceLocation.height), color: Color.red)
-            image?.drawLine(from: Point(x: face.faceLocation.left + face.faceLocation.width, y: face.faceLocation.top), to: Point(x: face.faceLocation.left + face.faceLocation.width, y: face.faceLocation.top + face.faceLocation.height), color: Color.red)
+            var einsteinImage = self.image(for: einsteinURL, shouldResize: false)
+            einsteinImage = einsteinImage?.resizedTo(height: Int(Double(face.faceLocation.height) * 1.6))
+            let faceMidX = face.faceLocation.left + Int(round(Double(face.faceLocation.width) * 0.5))
+            let faceMidY = face.faceLocation.top + Int(round(Double(face.faceLocation.height) * 0.25))
+            
+            let startPointX = faceMidX - Int(round(Double(einsteinImage?.size.width ?? 0) * 0.5))
+            let startPointY = faceMidY - Int(round(Double(einsteinImage?.size.height ?? 0) * 0.5))
+
+            let startPoint = Point(x: startPointX, y: startPointY)
+            
+            for i in 0 ..< (einsteinImage?.size.height ?? 0)
+            {
+                for j in 0 ..< (einsteinImage?.size.width ?? 0)
+                {
+                    let point = Point(x: startPoint.x + j, y: startPoint.y + i)
+                    if let imageColor = image?.get(pixel: point),
+                       let einsteinColor = einsteinImage?.get(pixel: Point(x: j, y: i))
+                    {
+                        let outputColor = colorFor(backgroundColor: imageColor, overlayColor: einsteinColor)
+                        image?.set(pixel: point, to: outputColor)
+                    }
+                }
+            }
         }
+        image = image?.resizedTo(width: 450)
         let newURL = finalDirectory.appendingPathComponent(name)
-        image?.write(to: newURL)
+        Log.info(newURL.absoluteString)
+        let success = image?.write(to: newURL)
+        Log.info(success.debugDescription)
         return URL(string: "\(self.url)/images/final/\(name)")
+    }
+    
+    private func postEinsteinResponse(at responseURL: URL?, json: JSON?)
+    {
+        guard let responseURL = responseURL,
+              let json = json else { return }
+        let requestOptions: [ClientRequest.Options] = [
+            .method("POST"),
+            .schema(responseURL.scheme ?? ""),
+            .hostname(responseURL.host ?? ""),
+            .path(responseURL.path),
+            .headers(["content-type": "application/json"])
+        ]
+        var responseBody = Data()
+        let request = HTTP.request(requestOptions)
+        { (response) in
+            if let response = response
+            {
+                Log.info("\(response.statusCode.rawValue)")
+                guard response.statusCode == .OK else { return }
+                _ = try? response.readAllData(into: &responseBody)
+            }
+        }
+        request.write(from: json.rawString() ?? "")
+        request.end()
+    }
+    
+    private func colorFor(backgroundColor: Color, overlayColor: Color) -> Color
+    {
+        let outputRed = (overlayColor.redComponent * overlayColor.alphaComponent) + (backgroundColor.redComponent * (1.0 - overlayColor.alphaComponent))
+        let outputGreen = (overlayColor.greenComponent * overlayColor.alphaComponent) + (backgroundColor.greenComponent * (1.0 - overlayColor.alphaComponent))
+        let outputBlue = (overlayColor.blueComponent * overlayColor.alphaComponent) + (backgroundColor.blueComponent * (1.0 - overlayColor.alphaComponent))
+        let outputAlpha = max(backgroundColor.alphaComponent, overlayColor.alphaComponent)
+        return Color(red: outputRed, green: outputGreen, blue: outputBlue, alpha: outputAlpha)
     }
     
     private func sendImageToWatson(imageURL: URL) -> [WatsonFace]?
     {
-        let name = imageURL.lastPathComponent
-        guard let data = getImageData(for: "https://gateway-a.watsonplatform.net/visual-recognition/api/v3/detect_faces?api_key=b78348e9d39118131c255bf670cbe5fe982d0fd4&url=\(self.url)/images/originals/\(name)&version=2016-05-20") else { return nil }
+        guard let url = URL(string: "https://gateway-a.watsonplatform.net/visual-recognition/api/v3/detect_faces?api_key=b78348e9d39118131c255bf670cbe5fe982d0fd4&url=\(imageURL.absoluteString)&version=2016-05-20"),
+              let data = try? Data(contentsOf: url) else { return nil }
         let json = JSON(data: data)
         guard let imageJSON = json["images"].arrayValue.first else { return nil }
         let facesJSON = imageJSON["faces"].arrayValue
+        Log.info(facesJSON.debugDescription)
         return facesJSON.map(WatsonFace.init)
     }
     
@@ -175,6 +263,11 @@ public class Controller {
             return newURL
         }
         return nil
+    }
+    
+    private func randomEinsteinURL() -> String
+    {
+        return "\(self.url)/einstein\(Int.random(9)).png"
     }
     
     // MARK: - Jeopardy
@@ -388,7 +481,7 @@ public class Controller {
         return output
     }
     
-    private func image(for path: String) -> Image?
+    private func image(for path: String, shouldResize: Bool = true) -> Image?
     {
         guard let imageData = getImageData(for: path),
               let url = URL(string: path) else { return nil }
@@ -400,7 +493,10 @@ public class Controller {
 
         if var image = Image(url: tempURL)
         {
-            image = image.resizedTo(height: 80) ?? image
+            if shouldResize
+            {
+                image = image.resizedTo(height: 80) ?? image
+            }
             return image
         }
         Log.error("Image NIL")
@@ -509,4 +605,96 @@ public class Controller {
         }
     }
     
+}
+
+extension Controller
+{
+    fileprivate func getAbsolutePath(for path: String) -> String
+    {
+        var path = path
+        if path.hasSuffix(separator) && path != separator {
+            path = String(path.characters.dropLast())
+        }
+        
+        // If we received a path with a tilde (~) in the front, expand it.
+        path = NSString(string: path).expandingTildeInPath
+        
+        if isAbsolute(path: path) {
+            return path
+        }
+        
+        let fileManager = FileManager()
+        
+        let absolutePath = fileManager.currentDirectoryPath + separator + path
+        if fileManager.fileExists(atPath: absolutePath) {
+            return absolutePath
+        }
+        
+        // the file does not exist on a path relative to the current working directory
+        // return the path relative to the original repository directory
+        guard let originalRepositoryPath = getOriginalRepositoryPath() else {
+            return absolutePath
+        }
+        
+        return originalRepositoryPath + separator + path
+    }
+    
+    fileprivate func getOriginalRepositoryPath() -> String?
+    {
+        // this file is at
+        // <original repository directory>/Sources/Kitura/staticFileServer/ResourcePathHandler.swift
+        // the original repository directory is four path components up
+        let currentFilePath = #file
+        
+        var pathComponents =
+            currentFilePath.characters.split(separator: separatorCharacter).map(String.init)
+        let numberOfComponentsFromKituraRepositoryDirectoryToThisFile = 4
+        
+        guard pathComponents.count >= numberOfComponentsFromKituraRepositoryDirectoryToThisFile else {
+            Log.error("unable to get original repository path for \(currentFilePath)")
+            return nil
+        }
+        
+        pathComponents.removeLast(numberOfComponentsFromKituraRepositoryDirectoryToThisFile)
+        pathComponents = removePackagesDirectory(pathComponents: pathComponents)
+        
+        return separator + pathComponents.joined(separator: separator)
+    }
+    
+    fileprivate func removePackagesDirectory(pathComponents: [String]) -> [String]
+    {
+        var pathComponents = pathComponents
+        let numberOfComponentsFromKituraPackageToDependentRepository = 3
+        let packagesComponentIndex = pathComponents.endIndex - numberOfComponentsFromKituraPackageToDependentRepository
+        if pathComponents.count > numberOfComponentsFromKituraPackageToDependentRepository &&
+            pathComponents[packagesComponentIndex] == ".build"  &&
+            pathComponents[packagesComponentIndex+1] == "checkouts" {
+            pathComponents.removeLast(numberOfComponentsFromKituraPackageToDependentRepository)
+        }
+        else {
+            let numberOfComponentsFromEditableKituraPackageToDependentRepository = 2
+            let editablePackagesComponentIndex = pathComponents.endIndex - numberOfComponentsFromEditableKituraPackageToDependentRepository
+            if pathComponents.count > numberOfComponentsFromEditableKituraPackageToDependentRepository &&
+                pathComponents[editablePackagesComponentIndex] == "Packages" {
+                pathComponents.removeLast(numberOfComponentsFromEditableKituraPackageToDependentRepository)
+            }
+        }
+        return pathComponents
+    }
+    
+    fileprivate func isAbsolute(path: String) -> Bool
+    {
+        return path.hasPrefix(separator)
+    }
+}
+
+extension Int {
+    static func random(_ max: Int) -> Int
+    {
+        #if os(Linux)
+            return Glibc.random() % max
+        #else
+            return Int(arc4random_uniform(UInt32(max)))
+        #endif
+    }
 }

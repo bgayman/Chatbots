@@ -91,6 +91,22 @@ extension SlackMessageAttachment
         self.timestamp = Int(stackOverflowItem.creationDate.timeIntervalSince1970)
     }
     
+    init(watsonFace: WatsonFace?, imageURL: URL)
+    {
+        self.color = "888888"
+        self.fallback = "I never think of the future - it comes soon enough. —Albert Einstein"
+        self.authorName = "Einstein Bot"
+        self.authorIcon = "http://kitura-starter-pseudocorneous-aardwolf.mybluemix.net/einstein.png"
+        self.authorLink = "http://kitura-starter-pseudocorneous-aardwolf.mybluemix.net/"
+        self.title = imageURL.absoluteString
+        self.titleLink = imageURL.absoluteString
+        self.imageURL = imageURL.absoluteString
+        if let identity = watsonFace?.identity
+        {
+            self.footer = identity.name + " -> Albert Einstein"
+        }
+    }
+    
     init(jeopardyQuestion: JeopardyQuestion)
     {
         self.color = "4614c1"

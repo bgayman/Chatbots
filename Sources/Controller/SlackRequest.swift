@@ -35,7 +35,7 @@ public struct SlackRequest
     public var userName: String?
     public var command: String?
     public var text: String?
-    public var responseURL: String? = ""
+    public var responseURL: URL?
     
     public init(payload: String)
     {
@@ -65,7 +65,7 @@ public struct SlackRequest
             case .text:
                 text = elementItem[1]
             case .responseURL:
-                responseURL = elementItem[1]
+                responseURL = URL(string: elementItem[1].removingPercentEncoding ?? "")
             }
         }
     }
