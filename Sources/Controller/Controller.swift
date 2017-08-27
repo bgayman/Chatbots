@@ -25,6 +25,7 @@ import Health
 import KituraNet
 import SwiftGD
 import Dispatch
+import MongoKitten
 
 struct Configuration
 {
@@ -47,6 +48,8 @@ public class Controller {
     {
         return String(separatorCharacter)
     }
+    
+    var jeopardyCollection: MongoKitten.Collection!
     
     var rootDirectory: URL
     {
@@ -111,6 +114,25 @@ public class Controller {
         router.get("/asciiArt/:keywords", handler: getAsciiArt)
         router.get("/stackOverflow/:keywords", handler: getStackOverflow)
         router.get("/faceDetect/:url", handler: getFaceDetect)
+        router.get("/jeopardyQuestionRandom/:count", handler: getJeopardy)
+        router.get("/jeopardyQuestionKeywords/:keywords", handler:getJeopardyKeywords)
+        setupMongoDB()
+    }
+    
+    // MARK: - Database
+    private func setupMongoDB()
+    {
+        do
+        {
+            let server = try Server("mongodb://bgayman:dpIPuVvN78KnjuiJ@cluster0-shard-00-00-2ruhq.mongodb.net:27017,cluster0-shard-00-00-2ruhq.mongodb.net:27017,cluster0-shard-00-00-2ruhq.mongodb.net:27017/admin?ssl=true")
+            let mydatabase: Database = server["mydatabase"]
+            let mycollection: MongoKitten.Collection = mydatabase["mycollection"]
+            self.jeopardyCollection = mycollection
+        }
+        catch
+        {
+            Log.debug(error.localizedDescription)
+        }
     }
     
     // MARK: - Einstein
@@ -290,27 +312,87 @@ public class Controller {
         response.send(json: json)
     }
     
+    private func getJeopardy(request: RouterRequest, response: RouterResponse, next: () -> Void)
+    {
+        defer
+        {
+            next()
+        }
+        guard let countString = request.parameters["count"],
+              let count = Int(countString),
+              let json = getJeopardyJSON(count: count) else { return }
+        
+        Log.info(json.description)
+        response.send(json: json)
+    }
+    
+    private func getJeopardyKeywords(request: RouterRequest, response: RouterResponse, next: () -> Void)
+    {
+        defer
+        {
+            next()
+        }
+        guard let keywords = request.parameters["keywords"]?.removingPercentEncoding,
+              let json = getJeopardyJSON(keywords: keywords.components(separatedBy: ",")) else { return }
+        Log.info(json.description)
+        response.send(json: json)
+    }
+    
     private func getJeopardyQuestions(count: Int?) -> [JeopardyQuestion]
     {
-        guard let json = getJeopardyJSON(count: count) else { return [] }
-        let jeopardyQuestions = json.arrayValue.map(JeopardyQuestion.init)
-        return jeopardyQuestions
+        let json = getJeopardyJSON(count: count)
+        let jeopardyQuestions = json?.arrayValue.map(JeopardyQuestion.init)
+        Log.info(json.debugDescription)
+        return jeopardyQuestions ?? []
     }
     
     private func getJeopardyJSON(count: Int?) -> JSON?
     {
-        let path = count == nil ? "http://jservice.io/api/random" : "http://jservice.io/api/random?count=\(count!)"
-        guard let url = URL(string: path) else { return nil }
         do
         {
-            let data = try Data(contentsOf: url)
-            let json = JSON(data: data)
-            Log.info(json.debugDescription)
+            let pipeline = AggregationPipeline([AggregationPipeline.Stage.sample(sizeOf: count ?? 0)])
+            
+            let cursor = try jeopardyCollection.aggregate(pipeline)
+            let json = JSON.parse(string: cursor.makeDocument().makeExtendedJSONString())
             return json
         }
         catch
         {
-            Log.info(error.localizedDescription)
+            Log.error(error.localizedDescription)
+            return nil
+        }
+    }
+    
+    private func getJeopardyJSON(keywords: [String]?) -> JSON?
+    {
+        do
+        {
+            guard let keywords = keywords,
+                  keywords.isEmpty == false else  { return nil }
+            var query: Query?
+            for keyword in keywords
+            {
+                if query == nil
+                {
+                    query = Query(aqt: .contains(key: "answer", val: keyword, options: [.caseInsensitive]))
+                    query = query! || Query(aqt: .contains(key: "question", val: keyword, options: [.caseInsensitive]))
+                }
+                else
+                {
+                    query = query! || Query(aqt: .contains(key: "question", val: keyword, options: [.caseInsensitive]))
+                    query = query! || Query(aqt: .contains(key: "answer", val: keyword, options: [.caseInsensitive]))
+                }
+            }
+            guard query != nil else { return nil }
+            Log.info(query!.queryDocument.debugDescription)
+            let documentSlice = try jeopardyCollection.find(query)
+            Log.info((try? documentSlice.count()).debugDescription)
+            let json = JSON.parse(string: documentSlice.makeDocument().makeExtendedJSONString())
+            return json
+        }
+        catch
+        {
+            Log.error(error.localizedDescription)
             return nil
         }
     }

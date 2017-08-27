@@ -28,6 +28,7 @@ let package = Package(
     .Package(url: "https://github.com/IBM-Swift/HeliumLogger.git", majorVersion: 1, minor: 7),
     .Package(url: "https://github.com/IBM-Bluemix/cf-deployment-tracker-client-swift.git", majorVersion: 3),
     .Package(url: "https://github.com/IBM-Swift/Health.git", majorVersion: 0),
-    .Package(url: "https://github.com/bradgayman/swiftgd.git", majorVersion: 1, minor: 2)
+    .Package(url: "https://github.com/bradgayman/swiftgd.git", majorVersion: 1, minor: 2),
+    .Package(url: "https://github.com/OpenKitten/MongoKitten.git", majorVersion: 4)
   ]
 )

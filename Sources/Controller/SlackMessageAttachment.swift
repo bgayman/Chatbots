@@ -115,7 +115,7 @@ extension SlackMessageAttachment
         self.authorIcon = "http://www.thefamouspeople.com/profiles/images/alex-trebek-2.jpg"
         self.authorLink = "https://en.wikipedia.org/wiki/Alex_Trebek"
         self.title = jeopardyQuestion.question
-        self.text = "Category: " + jeopardyQuestion.category.title + "\n" + "Point Value: " + String(jeopardyQuestion.value)
+        self.text = "Category: " + jeopardyQuestion.category + "\n" + "Point Value: " + String(jeopardyQuestion.value)
         self.footer = "Answer: " + jeopardyQuestion.answer.reversed
         if let airdate = jeopardyQuestion.airdate
         {
